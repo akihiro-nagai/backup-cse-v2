@@ -1,0 +1,25 @@
+# backup-cse 設定例
+destination:
+  bucket:
+    bucket: my-backup-bucket
+    prefix: my-macbook-backups/
+    region: us-west-2
+
+encryption:
+  # `backup-cse keygen backup.key` で生成した鍵ファイル。
+  # 相対パスはこの設定ファイルのディレクトリ基準で解決される。
+  # 環境変数 BACKUP_CSE_KEY (base64) を設定した場合はそちらが優先される。
+  key-file: backup.key
+
+sources:
+  photo:
+    path: /Users/aki/photo
+    storage-class: standard
+  programs:
+    path: /Users/aki/programs
+    # standard / standard-ia / intelligent-tiering / glacier-ir /
+    # glacier / deep-archive (glacier-deep-archive も可) など
+    storage-class: glacier-deep-archive
+    excludes:
+      # スラッシュ区切りのフルパスに対する正規表現
+      - .*/node_modules/.*
