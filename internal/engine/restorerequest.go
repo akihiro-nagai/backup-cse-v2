@@ -41,6 +41,8 @@ type RestoreRequestSummary struct {
 	InProgress int // 復元リクエスト済みで完了待ち
 	Requested  int // 今回新たに復元リクエストした数(dry-run では「予定」件数)
 	Failed     int
+
+	API storage.BillableSummary // コストに効く S3 API 呼び出しの集計
 }
 
 // RestoreRequest はソース内の各ファイルについて S3 Glacier の復元リクエスト
@@ -176,6 +178,9 @@ func RestoreRequest(ctx context.Context, opts RestoreRequestOptions) (RestoreReq
 	logger.Info("restore-request finished",
 		"total", sum.Total, "requested", sum.Requested, "in_progress", sum.InProgress,
 		"available", sum.Available, "not_needed", sum.NotNeeded, "failed", sum.Failed, "dry_run", opts.DryRun)
+
+	sum.API = client.APIStats()
+	logAPIUsage(logger, sum.API)
 
 	if sum.Failed > 0 {
 		return sum, fmt.Errorf("%d object(s) failed", sum.Failed)

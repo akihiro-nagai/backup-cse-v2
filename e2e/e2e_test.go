@@ -250,6 +250,14 @@ func TestBackupAndRestoreE2E(t *testing.T) {
 	if sum.Scanned != 2 || sum.Uploaded != 2 || sum.Failed != 0 {
 		t.Fatalf("first backup summary: %+v", sum)
 	}
+	// コスト対象 API 回数が計上されていること。少なくとも
+	// ListObjectsV2 1 回 + PutObject(2 ファイル + conceal db)3 回。
+	if sum.API.PutList < 4 {
+		t.Errorf("expected >=4 PUT/LIST requests, got %d (%+v)", sum.API.PutList, sum.API.ByOp)
+	}
+	if sum.API.Total == 0 {
+		t.Errorf("billable API total was not counted: %+v", sum.API)
+	}
 
 	// data/ 以下のキーは全成分が UUID v4 で、オリジナル名を含まない。
 	dataKeys := env.listKeys(t, "e2e/data/")

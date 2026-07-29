@@ -42,6 +42,7 @@ type Client struct {
 	bucket   string
 	prefix   string
 	key      crypt.Key
+	stats    *APIStats
 }
 
 // New はデフォルトの AWS 認証チェーンを使ってクライアントを作る。
@@ -51,14 +52,23 @@ func New(ctx context.Context, region, bucket, prefix string, key crypt.Key) (*Cl
 	if err != nil {
 		return nil, fmt.Errorf("load aws config: %w", err)
 	}
-	api := s3.NewFromConfig(cfg)
+	stats := NewAPIStats()
+	api := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.APIOptions = append(o.APIOptions, stats.attach)
+	})
 	return &Client{
 		api:      api,
 		uploader: manager.NewUploader(api),
 		bucket:   bucket,
 		prefix:   prefix,
 		key:      key,
+		stats:    stats,
 	}, nil
+}
+
+// APIStats はこれまでに発行したコスト対象 API 呼び出しの集計を返す。
+func (c *Client) APIStats() BillableSummary {
+	return c.stats.Billable()
 }
 
 // ListKeys は prefix+subPrefix 以下の全オブジェクトキー(subPrefix からの相対)を

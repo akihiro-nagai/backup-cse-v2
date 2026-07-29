@@ -39,6 +39,8 @@ type RestoreSummary struct {
 	Failed        int   // 失敗した数(NotRestored を含む)
 	NotRestored   int   // Glacier にアーカイブ済みで復元リクエスト未実施のため失敗した数
 	RestoredBytes int64 // リストアした平文バイト数
+
+	API storage.BillableSummary // コストに効く S3 API 呼び出しの集計
 }
 
 type restoreItem struct {
@@ -154,6 +156,8 @@ func Restore(ctx context.Context, opts RestoreOptions) (RestoreSummary, error) {
 		logger.Info("restore finished (dry-run)",
 			"total", sum.Total, "would_restore", sum.Candidates,
 			"would_restore_bytes", bytes, "skipped", sum.Skipped, "failed", sum.Failed)
+		sum.API = client.APIStats()
+		logAPIUsage(logger, sum.API)
 		if sum.Failed > 0 {
 			return sum, fmt.Errorf("%d file(s) are missing on S3", sum.Failed)
 		}
@@ -213,6 +217,9 @@ func Restore(ctx context.Context, opts RestoreOptions) (RestoreSummary, error) {
 		"total", sum.Total, "restored", sum.Restored,
 		"restored_bytes", sum.RestoredBytes, "skipped", sum.Skipped,
 		"failed", sum.Failed, "not_restored", sum.NotRestored, "interrupted", runErr != nil)
+
+	sum.API = client.APIStats()
+	logAPIUsage(logger, sum.API)
 
 	if sum.NotRestored > 0 {
 		logger.Warn("some objects are archived in S3 Glacier and were not restored; request restoration then re-run restore",

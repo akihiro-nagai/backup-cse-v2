@@ -47,6 +47,8 @@ type BackupSummary struct {
 	Skipped       int   // 変更なしでスキップした数
 	Failed        int   // 失敗した数
 	UploadedBytes int64 // アップロードした平文バイト数
+
+	API storage.BillableSummary // コストに効く S3 API 呼び出しの集計
 }
 
 // Backup は1ソースをS3へ差分バックアップする。
@@ -174,6 +176,8 @@ func Backup(ctx context.Context, opts BackupOptions) (BackupSummary, error) {
 		logger.Info("backup finished (dry-run)",
 			"scanned", sum.Scanned, "would_upload", sum.Candidates,
 			"would_upload_bytes", bytes, "skipped", sum.Skipped)
+		sum.API = client.APIStats()
+		logAPIUsage(logger, sum.API)
 		return sum, nil
 	}
 
@@ -250,6 +254,11 @@ func Backup(ctx context.Context, opts BackupOptions) (BackupSummary, error) {
 		"scanned", sum.Scanned, "uploaded", sum.Uploaded,
 		"uploaded_bytes", sum.UploadedBytes, "skipped", sum.Skipped,
 		"failed", sum.Failed, "interrupted", runErr != nil)
+
+	// この時点までの API 呼び出しを集計する(この直後のログアップロード
+	// 1 回の PutObject は、集計値を含んだログを S3 へ上げる都合上含まれない)。
+	sum.API = client.APIStats()
+	logAPIUsage(logger, sum.API)
 
 	if opts.LogPath != "" {
 		logKey := opts.SourceName + "/metadata/logs/" +

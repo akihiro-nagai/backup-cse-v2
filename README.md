@@ -75,6 +75,17 @@ $ backup-cse restore config.yaml programs
 
 端末にはプレーンテキスト、`<UserCacheDir>/backup-cse/logs/`(macOS では `~/Library/Caches/backup-cse/logs/`)には改行区切り JSON で記録されます。バックアップ実行後、ログは暗号化して S3 の `metadata/logs/` にもアップロードされます。
 
+### API 呼び出し回数の報告
+
+各コマンドは終了時に、コストに影響する S3 リクエストの発行回数を `aws api usage (billable requests)` としてログに出力します。
+
+- `put_list` : PUT / COPY / POST / LIST 系(高い方の課金クラス)。ファイル・conceal DB のアップロード、`ListObjectsV2`、マルチパートアップロードの各パートを含む
+- `get` : GET / HEAD 系(安い方の課金クラス)。ダウンロードや `restore-request` の `HeadObject` など
+- `restore` : `RestoreObject`(Glacier 取り出しリクエスト。別途データ取り出し料金もかかる)
+- `billable_total` : 上記の合計。無料の `DeleteObject` 等は含まない
+
+実際に S3 へ発行された操作単位で数えるため、大きなファイルのマルチパート分割や `ListObjectsV2` のページングも反映されます(リトライは二重計上しません)。
+
 ## 注意事項
 
 - **削除は伝播しません**: ローカルで消したファイルは S3 に残ります(`aws s3 sync` の `--delete` 相当は未実装)
