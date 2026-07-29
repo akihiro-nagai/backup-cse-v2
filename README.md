@@ -31,14 +31,16 @@ AWS 認証情報は通常の認証チェーン(環境変数、`~/.aws/credential
 ## 使い方
 
 ```console
-$ backup-cse backup  <config.yaml> <source-name> [--dry-run] [-p N]
-$ backup-cse restore <config.yaml> <source-name> [<dest-dir>] [--dry-run] [-p N]
+$ backup-cse backup          <config.yaml> <source-name> [--dry-run] [-p N]
+$ backup-cse restore         <config.yaml> <source-name> [<dest-dir>] [--dry-run] [-p N]
+$ backup-cse restore-request <config.yaml> <source-name> [--tier standard|bulk] [--days N] [--dry-run]
 ```
 
 - `--dry-run` : 転送対象の一覧だけ表示し、S3 にもローカルにも書き込まない
 - `-p, --parallel` : 並列転送数(デフォルト 4)
 - `restore` の `<dest-dir>` を省略するとソースの `path` へ復元し、更新日時も復元される
 - 実行中は端末に進捗が表示される。Ctrl-C で中断すると転送を止め、メタデータ(bbolt DB とログ)をアップロードしてから終了する(もう一度 Ctrl-C で強制終了)
+- `storage-class` に `glacier` / `deep-archive` を指定したソースは、`restore` の前に `restore-request` で復元をリクエストしておく必要がある(下記「Glacier からのリストア」参照)
 
 ## S3 上のレイアウト
 
@@ -51,6 +53,24 @@ $ backup-cse restore <config.yaml> <source-name> [<dest-dir>] [--dry-run] [-p N]
 
 `metadata/` 配下は復元時にすぐ必要になるため、ソースのストレージクラス設定に関わらず常に STANDARD で保存されます。
 
+## Glacier からのリストア
+
+`storage-class` に `glacier`(Glacier Flexible Retrieval)や `deep-archive`(Glacier Deep Archive、`glacier-deep-archive` も可)を指定したソースは、アーカイブされたオブジェクトを直接ダウンロードできません。`restore` を実行する前に、まず復元リクエスト(restore request)を送って一時的な取り出しコピーを用意しておく必要があります。
+
+```console
+$ backup-cse restore-request config.yaml programs --tier standard   # 数時間で復元(既定)
+$ backup-cse restore-request config.yaml programs --tier bulk       # 最大48時間、より安価
+# ... 復元完了を待ってから ...
+$ backup-cse restore config.yaml programs
+```
+
+- 復元リクエスト済み・復元完了済みのファイルはスキップされ、未着手のものにだけリクエストが送られる(何度実行しても安全)
+- `--days` で一時コピーを保持する日数を指定できる(既定 7 日。この期間を過ぎると再びアーカイブ状態に戻り、再度 `restore-request` が必要)
+- Deep Archive では `--tier expedited` は利用できない
+- `standard` / `standard-ia` / `glacier-instant-retrieval` など即座に取得可能なストレージクラスのソースには何もしない
+- `restore-request` を挟まずに `restore` を実行すると、復元未完了のファイルはエラーとしてログに記録され(他のファイルの処理は継続する)、`restore-request` の実行を促すメッセージが表示される
+- `RestoreObject` API の呼び出しには IAM ポリシーで `s3:RestoreObject` の許可が別途必要
+
 ## ログ
 
 端末にはプレーンテキスト、`<UserCacheDir>/backup-cse/logs/`(macOS では `~/Library/Caches/backup-cse/logs/`)には改行区切り JSON で記録されます。バックアップ実行後、ログは暗号化して S3 の `metadata/logs/` にもアップロードされます。
@@ -58,7 +78,7 @@ $ backup-cse restore <config.yaml> <source-name> [<dest-dir>] [--dry-run] [-p N]
 ## 注意事項
 
 - **削除は伝播しません**: ローカルで消したファイルは S3 に残ります(`aws s3 sync` の `--delete` 相当は未実装)
-- **Glacier / Deep Archive からのリストア**は、S3 側で事前に restore リクエストを完了させておく必要があります。未リストアのオブジェクトはエラーとしてログに記録されます
+- **Glacier / Deep Archive からのリストア**は、事前に `restore-request` で復元を完了させておく必要があります(詳細は上記「Glacier からのリストア」参照)
 - 除外パターンはスラッシュ区切りの**フルパス**に対する Go 正規表現です(例: `.*/node_modules/.*`)
 - ストレージクラス名の `glacier-deep-archive` は S3 の `DEEP_ARCHIVE` にマッピングされます
 

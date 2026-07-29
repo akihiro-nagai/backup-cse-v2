@@ -195,6 +195,44 @@ func (e *e2eEnv) restore(t *testing.T, dest string, dryRun bool) engine.RestoreS
 	return sum
 }
 
+func (e *e2eEnv) restoreRequest(t *testing.T, tier string, dryRun bool) engine.RestoreRequestSummary {
+	t.Helper()
+	sum, err := engine.RestoreRequest(context.Background(), engine.RestoreRequestOptions{
+		Config:     e.cfg,
+		SourceName: "e2e",
+		Tier:       tier,
+		Days:       1,
+		DryRun:     dryRun,
+		Parallel:   4,
+	})
+	if err != nil {
+		t.Fatalf("restore-request: %v (summary %+v)", err, sum)
+	}
+	return sum
+}
+
+// TestRestoreRequestSkipsStandardStorageE2E は、Standard クラスのソースに
+// 対して restore-request を実行した場合、復元リクエストが一切発生せず
+// 全ファイルが NotNeeded と判定されることを確認する。
+// この e2e ソース (config.example.yaml 参照) は storage-class: standard な
+// ので、実際に Glacier へアーカイブして数時間〜48時間待つ本格的な検証は
+// 現実的でない。ここでは HeadObject 経由の判定ロジックが実 S3 に対して
+// 正しく動くことだけを検証する。
+func TestRestoreRequestSkipsStandardStorageE2E(t *testing.T) {
+	env := setup(t)
+	env.backup(t, false)
+
+	sum := env.restoreRequest(t, "standard", true)
+	if sum.Total != 2 || sum.NotNeeded != 2 || sum.Requested != 0 || sum.Failed != 0 {
+		t.Fatalf("restore-request summary for standard-class source: %+v", sum)
+	}
+
+	sum = env.restoreRequest(t, "standard", false)
+	if sum.Total != 2 || sum.NotNeeded != 2 || sum.Requested != 0 || sum.Failed != 0 {
+		t.Fatalf("restore-request (non-dry-run) summary for standard-class source: %+v", sum)
+	}
+}
+
 func TestBackupAndRestoreE2E(t *testing.T) {
 	env := setup(t)
 
