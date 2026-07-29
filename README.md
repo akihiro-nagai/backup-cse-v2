@@ -68,7 +68,7 @@ $ backup-cse restore config.yaml programs
 - `--days` で一時コピーを保持する日数を指定できる(既定 7 日。この期間を過ぎると再びアーカイブ状態に戻り、再度 `restore-request` が必要)
 - Deep Archive では `--tier expedited` は利用できない
 - `standard` / `standard-ia` / `glacier-instant-retrieval` など即座に取得可能なストレージクラスのソースには何もしない
-- `restore-request` を挟まずに `restore` を実行すると、復元未完了のファイルはエラーとしてログに記録され(他のファイルの処理は継続する)、`restore-request` の実行を促すメッセージが表示される
+- `restore-request` を挟まずに `restore` を実行すると、アーカイブ済みで復元未完了のファイルは失敗として扱われる(他のファイルの処理は継続する)。`restore` はその件数を通常の失敗とは別に `not_restored` としてログ・終了時サマリに出力し、終了時のエラーメッセージで `restore-request` の実行を促す
 - `RestoreObject` API の呼び出しには IAM ポリシーで `s3:RestoreObject` の許可が別途必要
 
 ## ログ

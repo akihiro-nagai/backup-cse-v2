@@ -36,7 +36,8 @@ type RestoreSummary struct {
 	Candidates    int   // リストア対象と判定された数
 	Restored      int   // 実際にリストアした数
 	Skipped       int   // ローカルが最新でスキップした数
-	Failed        int   // 失敗した数
+	Failed        int   // 失敗した数(NotRestored を含む)
+	NotRestored   int   // Glacier にアーカイブ済みで復元リクエスト未実施のため失敗した数
 	RestoredBytes int64 // リストアした平文バイト数
 }
 
@@ -165,7 +166,7 @@ func Restore(ctx context.Context, opts RestoreOptions) (RestoreSummary, error) {
 	}
 	opts.Progress.Start("restore", len(items), totalBytes)
 
-	var restored, failed, restoredBytes atomic.Int64
+	var restored, failed, notRestored, restoredBytes atomic.Int64
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(parallel)
 	for _, it := range items {
@@ -183,7 +184,14 @@ func Restore(ctx context.Context, opts RestoreOptions) (RestoreSummary, error) {
 				}
 				failed.Add(1)
 				opts.Progress.FileFailed()
-				logger.Error("restore failed", "path", it.rel, "error", err.Error())
+				if errors.Is(err, storage.ErrNotRestored) {
+					// Glacier にアーカイブされたまま復元リクエストされていない。
+					notRestored.Add(1)
+					logger.Error("restore failed: object is archived and not restored; run 'backup-cse restore-request' first",
+						"path", it.rel, "key", dataPrefix+it.rec.Concealed)
+				} else {
+					logger.Error("restore failed", "path", it.rel, "error", err.Error())
+				}
 				return nil
 			}
 			restored.Add(1)
@@ -197,18 +205,29 @@ func Restore(ctx context.Context, opts RestoreOptions) (RestoreSummary, error) {
 	opts.Progress.Stop()
 
 	sum.Restored = int(restored.Load())
+	sum.NotRestored = int(notRestored.Load())
 	sum.Failed += int(failed.Load())
 	sum.RestoredBytes = restoredBytes.Load()
 
 	logger.Info("restore finished",
 		"total", sum.Total, "restored", sum.Restored,
 		"restored_bytes", sum.RestoredBytes, "skipped", sum.Skipped,
-		"failed", sum.Failed, "interrupted", runErr != nil)
+		"failed", sum.Failed, "not_restored", sum.NotRestored, "interrupted", runErr != nil)
+
+	if sum.NotRestored > 0 {
+		logger.Warn("some objects are archived in S3 Glacier and were not restored; request restoration then re-run restore",
+			"not_restored", sum.NotRestored,
+			"hint", fmt.Sprintf("backup-cse restore-request <config.yaml> %s", opts.SourceName))
+	}
 
 	if runErr != nil {
 		return sum, runErr
 	}
 	if sum.Failed > 0 {
+		if sum.NotRestored > 0 {
+			return sum, fmt.Errorf("%d file(s) failed to restore; %d are archived and not restored (run 'backup-cse restore-request <config.yaml> %s' first)",
+				sum.Failed, sum.NotRestored, opts.SourceName)
+		}
 		return sum, fmt.Errorf("%d file(s) failed to restore", sum.Failed)
 	}
 	return sum, nil
