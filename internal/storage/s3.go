@@ -97,16 +97,54 @@ func (c *Client) ListKeys(ctx context.Context, subPrefix string) (map[string]str
 	return out, nil
 }
 
+// S3 マルチパートアップロードの制約。
+const (
+	s3MaxUploadParts = 10000                         // 1オブジェクトあたりの最大パート数
+	s3MinPartSize    = 5 * 1024 * 1024               // 最小パートサイズ(最終パートを除く)
+	s3MaxPartSize    = 5 * 1024 * 1024 * 1024        // 最大パートサイズ(5 GiB)
+	s3MaxObjectSize  = 5 * 1024 * 1024 * 1024 * 1024 // 最大オブジェクトサイズ(5 TiB)
+)
+
+// uploadPartSize は contentSize バイトのオブジェクトを、パート数を S3 の上限
+// (10,000)以内に収めつつアップロードするためのパートサイズを返す。
+// 既定の 5 MiB では約 48.8 GiB を超えるとパート数上限に達するため、大きい
+// ファイルではパートサイズを引き上げる。安全マージンとして上限を少し
+// 小さめ(9,500)に見積もり、MiB 単位へ切り上げる。
+func uploadPartSize(contentSize int64) (int64, error) {
+	if contentSize > s3MaxObjectSize {
+		return 0, fmt.Errorf("object size %d bytes exceeds S3 maximum of 5 TiB", contentSize)
+	}
+	part := int64(s3MinPartSize)
+	const targetMaxParts = 9500
+	need := (contentSize + targetMaxParts - 1) / targetMaxParts
+	if need > part {
+		const mib = 1024 * 1024
+		part = ((need + mib - 1) / mib) * mib // MiB 単位に切り上げ
+	}
+	if part > s3MaxPartSize {
+		part = s3MaxPartSize
+	}
+	return part, nil
+}
+
 // Upload は src を暗号化して prefix+key へアップロードする。
-func (c *Client) Upload(ctx context.Context, key string, src io.Reader, class types.StorageClass, meta map[string]string) error {
+// plaintextSize は src の平文バイト数(不明なら 0 以下)。大きいファイルでも
+// マルチパートのパート数上限に達しないよう、暗号文サイズからパートサイズを決める。
+func (c *Client) Upload(ctx context.Context, key string, src io.Reader, plaintextSize int64, class types.StorageClass, meta map[string]string) error {
+	partSize, err := uploadPartSize(crypt.CiphertextSize(plaintextSize))
+	if err != nil {
+		return fmt.Errorf("upload s3://%s/%s%s: %w", c.bucket, c.prefix, key, err)
+	}
 	enc := crypt.EncryptingReader(src, c.key)
 	defer enc.Close()
-	_, err := c.uploader.Upload(ctx, &s3.PutObjectInput{
+	_, err = c.uploader.Upload(ctx, &s3.PutObjectInput{
 		Bucket:       aws.String(c.bucket),
 		Key:          aws.String(c.prefix + key),
 		Body:         enc,
 		StorageClass: class,
 		Metadata:     meta,
+	}, func(u *manager.Uploader) {
+		u.PartSize = partSize
 	})
 	if err != nil {
 		return fmt.Errorf("upload s3://%s/%s%s: %w", c.bucket, c.prefix, key, err)

@@ -43,6 +43,53 @@ func TestParseStorageClass(t *testing.T) {
 	}
 }
 
+func TestUploadPartSize(t *testing.T) {
+	const (
+		mib = 1024 * 1024
+		gib = 1024 * mib
+		tib = 1024 * gib
+	)
+	// 小さいファイルは最小パートサイズ(5 MiB)のまま。
+	for _, small := range []int64{0, 1, mib, 40 * gib} {
+		got, err := uploadPartSize(small)
+		if err != nil {
+			t.Fatalf("uploadPartSize(%d): %v", small, err)
+		}
+		if got != s3MinPartSize {
+			t.Errorf("uploadPartSize(%d) = %d, want %d (min)", small, got, s3MinPartSize)
+		}
+	}
+
+	// 5 TiB を超えるとエラー。
+	if _, err := uploadPartSize(s3MaxObjectSize + 1); err == nil {
+		t.Error("expected error for object over 5 TiB")
+	}
+
+	// 各サイズでパート数が S3 の上限(10,000)以内かつパートサイズが 5 GiB 以内。
+	for _, size := range []int64{60 * gib, 160 * gib, 500 * gib, tib, 5 * tib} {
+		part, err := uploadPartSize(size)
+		if err != nil {
+			t.Fatalf("uploadPartSize(%d): %v", size, err)
+		}
+		if part < s3MinPartSize || part > s3MaxPartSize {
+			t.Errorf("size %d: part %d out of range [%d,%d]", size, part, s3MinPartSize, s3MaxPartSize)
+		}
+		parts := (size + part - 1) / part
+		if parts > s3MaxUploadParts {
+			t.Errorf("size %d: %d parts of %d bytes exceeds max %d", size, parts, part, s3MaxUploadParts)
+		}
+	}
+
+	// 160 GB は既定の 5 MiB では上限超過(回帰の再現)。今の算出では収まる。
+	part, _ := uploadPartSize(160 * gib)
+	if (160*gib+s3MinPartSize-1)/s3MinPartSize <= s3MaxUploadParts {
+		t.Fatal("test premise wrong: 160GiB should exceed max parts at 5MiB")
+	}
+	if parts := (160*gib + part - 1) / part; parts > s3MaxUploadParts {
+		t.Errorf("160GiB still exceeds max parts: %d", parts)
+	}
+}
+
 func TestParseTier(t *testing.T) {
 	cases := []struct {
 		in   string

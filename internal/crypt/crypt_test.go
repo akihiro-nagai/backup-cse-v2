@@ -134,6 +134,18 @@ func TestEncryptingReader(t *testing.T) {
 	}
 }
 
+func TestCiphertextSize(t *testing.T) {
+	key := testKey(t)
+	sizes := []int{0, 1, 15, 16, 1000, ChunkSize - 1, ChunkSize, ChunkSize + 1, 3 * ChunkSize, 5*ChunkSize + 7}
+	for _, size := range sizes {
+		plain := make([]byte, size)
+		enc := encryptBytes(t, key, plain)
+		if got := CiphertextSize(int64(size)); got != int64(len(enc)) {
+			t.Errorf("CiphertextSize(%d) = %d, actual encrypted len = %d", size, got, len(enc))
+		}
+	}
+}
+
 func TestKeyParseRoundTrip(t *testing.T) {
 	k := testKey(t)
 	got, err := ParseKey(k.String())

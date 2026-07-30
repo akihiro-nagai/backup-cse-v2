@@ -42,6 +42,23 @@ var (
 	ErrTruncated = errors.New("crypt: encrypted stream is truncated")
 )
 
+// CiphertextSize は plaintextSize バイトの平文を Encrypt したときの出力バイト数を返す。
+// 出力は header(magic+noncePrefix)+ 平文 + チャンク数ぶんの GCM タグ。
+// 空入力でも最終チャンク(タグのみ)が1つ出るため、チャンク数は最低 1。
+func CiphertextSize(plaintextSize int64) int64 {
+	if plaintextSize < 0 {
+		plaintextSize = 0
+	}
+	chunks := plaintextSize / ChunkSize
+	if plaintextSize%ChunkSize != 0 {
+		chunks++
+	}
+	if chunks == 0 {
+		chunks = 1
+	}
+	return int64(len(magic)+noncePrefixSize) + plaintextSize + chunks*tagSize
+}
+
 // Key は AES-256-GCM の共通鍵。
 type Key [keySize]byte
 

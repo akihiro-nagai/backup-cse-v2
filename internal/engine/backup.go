@@ -303,7 +303,7 @@ func uploadOne(ctx context.Context, client *storage.Client, db *conceal.DB, root
 		storage.MetaMTime: strconv.FormatInt(it.file.mtimeNano, 10),
 		storage.MetaSize:  strconv.FormatInt(it.file.size, 10),
 	}
-	if err := client.Upload(ctx, dataPrefix+it.concealed, f, class, meta); err != nil {
+	if err := client.Upload(ctx, dataPrefix+it.concealed, f, it.file.size, class, meta); err != nil {
 		return err
 	}
 	// DB への記録はアップロード成功後に行う。逆順だと、アップロード失敗時に
@@ -327,5 +327,11 @@ func uploadFile(ctx context.Context, client *storage.Client, key, path string) e
 		return err
 	}
 	defer f.Close()
-	return client.Upload(ctx, key, f, types.StorageClassStandard, nil)
+	// conceal DB は多数のファイルを持つと大きくなり得るため、サイズをパート
+	// サイズ算出に渡す。取得できなければ既定(小さいパート)にフォールバック。
+	var size int64
+	if info, serr := f.Stat(); serr == nil {
+		size = info.Size()
+	}
+	return client.Upload(ctx, key, f, size, types.StorageClassStandard, nil)
 }
