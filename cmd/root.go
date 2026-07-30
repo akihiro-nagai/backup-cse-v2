@@ -7,6 +7,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version はリリースビルド時に ldflags で埋め込まれる。
+var version = "dev"
+
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "backup-cse",
@@ -14,6 +17,7 @@ func newRootCmd() *cobra.Command {
 		Long: `backup-cse はローカルディレクトリをクライアントサイドで暗号化して
 Amazon S3 へ差分バックアップ・リストアする CLI ツールです。
 ファイル名・ディレクトリ名は UUID v4 で秘匿化されます。`,
+		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

@@ -1,3 +1,4 @@
 /backup-cse
 *.key
 *.ndjson
+/dist/

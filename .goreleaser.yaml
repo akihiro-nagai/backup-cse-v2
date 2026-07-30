@@ -1,0 +1,62 @@
+version: 2
+
+project_name: backup-cse
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: backup-cse
+    main: .
+    binary: backup-cse
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X backup-cse/cmd.version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Linux/Windows は amd64、macOS は arm64 のみを配布する。
+    ignore:
+      - goos: linux
+        goarch: arm64
+      - goos: windows
+        goarch: arm64
+      - goos: darwin
+        goarch: amd64
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    # Windows は zip で配布する。
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+      - config.example.yaml
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  draft: false
+  prerelease: auto
