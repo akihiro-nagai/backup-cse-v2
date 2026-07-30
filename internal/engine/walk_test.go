@@ -40,7 +40,7 @@ func TestWalkSource(t *testing.T) {
 	}
 
 	excludes := []*regexp.Regexp{regexp.MustCompile(`.*/node_modules/.*`)}
-	files, dirs, err := walkSource(root, excludes, discardLogger())
+	files, dirs, err := walkSource(root, root, excludes, discardLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,11 +80,75 @@ func TestWalkSourceRootExclude(t *testing.T) {
 	writeFile(t, filepath.Join(root, "keep.txt"), "k")
 
 	excludes := []*regexp.Regexp{regexp.MustCompile(`.*/node_modules/.*`)}
-	files, _, err := walkSource(root, excludes, discardLogger())
+	files, _, err := walkSource(root, root, excludes, discardLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(files) != 1 || files[0].rel != "keep.txt" {
 		t.Errorf("files = %+v", files)
+	}
+}
+
+// TestWalkSourceSubtree は scanRoot を relBase のサブディレクトリにしたとき、
+// そのサブツリーだけを走査しつつ rel が relBase 基準になることを確認する。
+func TestWalkSourceSubtree(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "top.txt"), "t")
+	writeFile(t, filepath.Join(root, "a", "b", "one.txt"), "1")
+	writeFile(t, filepath.Join(root, "a", "b", "two.txt"), "22")
+	writeFile(t, filepath.Join(root, "a", "other.txt"), "o")
+	writeFile(t, filepath.Join(root, "z", "outside.txt"), "z")
+
+	scanRoot := filepath.Join(root, "a", "b")
+	files, dirs, err := walkSource(root, scanRoot, nil, discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var rels []string
+	for _, f := range files {
+		rels = append(rels, f.rel)
+	}
+	slices.Sort(rels)
+	// rel は relBase(root)基準。サブツリー外の top.txt / a/other.txt / z/* は含まない。
+	want := []string{"a/b/one.txt", "a/b/two.txt"}
+	if !slices.Equal(rels, want) {
+		t.Errorf("files = %v, want %v", rels, want)
+	}
+	// scanRoot 自身(a/b)はディレクトリとして登録される(rel != ".")。
+	if !slices.Contains(dirs, "a/b") {
+		t.Errorf("scanRoot dir a/b not collected: %v", dirs)
+	}
+}
+
+// TestWalkSourceSingleFile は scanRoot が単一ファイルのとき、そのファイル
+// だけが rel = relBase 相対で収集されることを確認する。
+func TestWalkSourceSingleFile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a", "b", "only.txt"), "hello")
+	writeFile(t, filepath.Join(root, "a", "b", "other.txt"), "x")
+
+	scanRoot := filepath.Join(root, "a", "b", "only.txt")
+	files, dirs, err := walkSource(root, scanRoot, nil, discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].rel != "a/b/only.txt" {
+		t.Errorf("files = %+v", files)
+	}
+	if len(dirs) != 0 {
+		t.Errorf("dirs = %v, want none", dirs)
+	}
+}
+
+// TestWalkSourceMissingScanRoot は存在しない scanRoot がハードエラーになる
+// ことを確認する。
+func TestWalkSourceMissingScanRoot(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.txt"), "a")
+
+	scanRoot := filepath.Join(root, "does-not-exist")
+	if _, _, err := walkSource(root, scanRoot, nil, discardLogger()); err == nil {
+		t.Fatal("expected error for missing scanRoot")
 	}
 }

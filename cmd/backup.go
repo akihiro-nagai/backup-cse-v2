@@ -11,6 +11,7 @@ func newBackupCmd() *cobra.Command {
 	var (
 		dryRun   bool
 		parallel int
+		subpath  string
 	)
 	cmd := &cobra.Command{
 		Use:   "backup <config.yaml> <source-name>",
@@ -34,6 +35,7 @@ func newBackupCmd() *cobra.Command {
 			_, err = engine.Backup(cmd.Context(), engine.BackupOptions{
 				Config:     cfg,
 				SourceName: args[1],
+				Subpath:    subpath,
 				DryRun:     dryRun,
 				Parallel:   parallel,
 				Logger:     env.Logger,
@@ -45,5 +47,6 @@ func newBackupCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be uploaded without uploading")
 	cmd.Flags().IntVarP(&parallel, "parallel", "p", 4, "number of parallel uploads")
+	cmd.Flags().StringVar(&subpath, "subpath", "", "restrict to a path (file or dir) under the source root; accepts a source-relative path or an absolute path inside the source")
 	return cmd
 }

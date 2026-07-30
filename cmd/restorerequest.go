@@ -13,6 +13,7 @@ func newRestoreRequestCmd() *cobra.Command {
 		days     int
 		dryRun   bool
 		parallel int
+		subpath  string
 	)
 	cmd := &cobra.Command{
 		Use:   "restore-request <config.yaml> <source-name>",
@@ -45,6 +46,7 @@ standard-ia や glacier-instant-retrieval など、即座に取得可能なス�
 				SourceName: args[1],
 				Tier:       tier,
 				Days:       int32(days),
+				Subpath:    subpath,
 				DryRun:     dryRun,
 				Parallel:   parallel,
 				Logger:     env.Logger,
@@ -56,5 +58,6 @@ standard-ia や glacier-instant-retrieval など、即座に取得可能なス�
 	cmd.Flags().IntVar(&days, "days", 7, "number of days the restored copy stays available before reverting to archive")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be requested without calling S3")
 	cmd.Flags().IntVarP(&parallel, "parallel", "p", 4, "number of parallel S3 requests")
+	cmd.Flags().StringVar(&subpath, "subpath", "", "restrict to a path (file or dir) under the source root; accepts a source-relative path or an absolute path inside the source")
 	return cmd
 }

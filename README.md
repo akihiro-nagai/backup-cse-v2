@@ -31,16 +31,65 @@ AWS 認証情報は通常の認証チェーン(環境変数、`~/.aws/credential
 ## 使い方
 
 ```console
-$ backup-cse backup          <config.yaml> <source-name> [--dry-run] [-p N]
-$ backup-cse restore         <config.yaml> <source-name> [<dest-dir>] [--dry-run] [-p N]
-$ backup-cse restore-request <config.yaml> <source-name> [--tier standard|bulk] [--days N] [--dry-run]
+$ backup-cse backup          <config.yaml> <source-name> [--subpath P] [--dry-run] [-p N]
+$ backup-cse restore         <config.yaml> <source-name> [<dest-dir>] [--subpath P] [--dry-run] [-p N]
+$ backup-cse restore-request <config.yaml> <source-name> [--subpath P] [--tier standard|bulk] [--days N] [--dry-run]
+$ backup-cse list            <config.yaml> <source-name> [--subpath P] [-l] [--json] [--dirs]
 ```
 
 - `--dry-run` : 転送対象の一覧だけ表示し、S3 にもローカルにも書き込まない
 - `-p, --parallel` : 並列転送数(デフォルト 4)
+- `--subpath` : ソース配下の特定パス(ファイルまたはディレクトリ)だけを対象にする(下記「サブパスで対象を絞る」参照)
 - `restore` の `<dest-dir>` を省略するとソースの `path` へ復元し、更新日時も復元される
 - 実行中は端末に進捗が表示される。Ctrl-C で中断すると転送を止め、メタデータ(bbolt DB とログ)をアップロードしてから終了する(もう一度 Ctrl-C で強制終了)
 - `storage-class` に `glacier` / `deep-archive` を指定したソースは、`restore` の前に `restore-request` で復元をリクエストしておく必要がある(下記「Glacier からのリストア」参照)
+
+## サブパスで対象を絞る
+
+`--subpath` を付けると、ソース(`sources.<name>.path`)配下の特定のパスだけを backup / restore / restore-request の対象にできます。大きなソースの一部だけを素早く扱いたいときに便利です。
+
+```console
+# 写真ソースのうち 2024/ 以下だけをバックアップ
+$ backup-cse backup config.yaml photo --subpath 2024
+
+# 2024/ 以下だけを別ディレクトリへ復元
+$ backup-cse restore config.yaml photo ./restore-out --subpath 2024
+
+# 単一ファイルだけを対象にすることも可能
+$ backup-cse backup config.yaml photo --subpath 2024/jan/party.jpg
+```
+
+- 値は **ソースルート相対パス**(例 `2024/photos`)に加え、**ソース配下の絶対パス**(例 `/Users/aki/photo/2024/photos`)も指定できます。シェル補完が使えて便利です
+- ソース外を指す絶対パスや、`..` でソースルートを抜ける指定はエラーになります
+- `excludes` と併用でき、サブパス内でも除外パターンは有効です
+- サブパスバックアップは**部分的な更新**です。対象外ファイルの S3 オブジェクトや秘匿名マッピング(bbolt)は変更されず、そのまま保持されます(削除の伝播はありません)
+- `restore` / `restore-request` はサブパスに一致するファイルが1件も無い場合、警告を出して正常終了します
+
+## バックアップ内容の確認(list)
+
+別マシンでリストアするときは、そのマシンにオリジナルのディレクトリ構造が無いため、何がバックアップされているか・どの `--subpath` を指定すればよいかが分かりません。`list`(別名 `ls`)は S3 上の conceal DB を取得して、バックアップ済みのオリジナルパス一覧を表示します。**読み取り専用**で、S3 には何も書き込みません。
+
+```console
+# バックアップ済みのパス一覧
+$ backup-cse list config.yaml photo
+2024/feb.jpg
+2024/jan/party.jpg
+2023/old.jpg
+
+# サイズと更新日時つき、2024/ 以下だけ
+$ backup-cse list config.yaml photo -l --subpath 2024
+2026-01-15T09:30:00Z     1.2 MiB  2024/feb.jpg
+2026-02-03T14:00:00Z     3.4 MiB  2024/jan/party.jpg
+
+# 機械可読(1行1JSON)。合計サマリは標準エラーに出るのでパイプを汚さない
+$ backup-cse ls config.yaml photo --json | jq -r 'select(.size > 1e6) | .path'
+```
+
+- 一覧は**標準出力**、`N files, M dirs, total X` のサマリと診断は**標準エラー出力**に出ます(パイプや `--json | jq` で扱いやすい)
+- `-l` : 各ファイルのサイズと更新日時(UTC・RFC3339)を表示
+- `--json` : 1行1JSON(`path` / `is_dir` / `size` / `mtime`)
+- `--dirs` : 空ディレクトリを含む登録済みディレクトリも一覧に含める(末尾 `/` で区別)
+- `--subpath` : backup / restore と同じくソース配下の特定パスに絞り込み
 
 ## S3 上のレイアウト
 

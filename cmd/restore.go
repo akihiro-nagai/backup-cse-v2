@@ -11,6 +11,7 @@ func newRestoreCmd() *cobra.Command {
 	var (
 		dryRun   bool
 		parallel int
+		subpath  string
 	)
 	cmd := &cobra.Command{
 		Use:   "restore <config.yaml> <source-name> [<dest-dir>]",
@@ -37,6 +38,7 @@ func newRestoreCmd() *cobra.Command {
 				Config:     cfg,
 				SourceName: args[1],
 				DestDir:    destDir,
+				Subpath:    subpath,
 				DryRun:     dryRun,
 				Parallel:   parallel,
 				Logger:     env.Logger,
@@ -47,5 +49,6 @@ func newRestoreCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be restored without writing files")
 	cmd.Flags().IntVarP(&parallel, "parallel", "p", 4, "number of parallel downloads")
+	cmd.Flags().StringVar(&subpath, "subpath", "", "restrict to a path (file or dir) under the source root; accepts a source-relative path or an absolute path inside the source")
 	return cmd
 }

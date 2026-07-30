@@ -33,6 +33,9 @@ type BackupOptions struct {
 	DryRun     bool
 	Parallel   int
 	Logger     *slog.Logger
+	// Subpath はソースルート相対(または source 配下の絶対パス)。空でなければ
+	// そのパス配下のファイルだけをバックアップ対象にする。
+	Subpath string
 	// LogPath はローカル NDJSON ログのパス。空でなければバックアップ後に
 	// 暗号化して <source>/metadata/logs/ へアップロードする。
 	LogPath  string
@@ -73,6 +76,10 @@ func Backup(ctx context.Context, opts BackupOptions) (BackupSummary, error) {
 	if err != nil {
 		return sum, err
 	}
+	subpath, err := normalizeSubpath(opts.Subpath, src.Path)
+	if err != nil {
+		return sum, err
+	}
 	class, err := storage.ParseStorageClass(src.StorageClass)
 	if err != nil {
 		return sum, fmt.Errorf("source %s: %w", opts.SourceName, err)
@@ -88,7 +95,7 @@ func Backup(ctx context.Context, opts BackupOptions) (BackupSummary, error) {
 	}
 
 	logger.Info("backup started",
-		"source", opts.SourceName, "path", src.Path,
+		"source", opts.SourceName, "path", src.Path, "subpath", subpath,
 		"bucket", bkt.Bucket, "prefix", bkt.Prefix,
 		"storage_class", string(class), "parallel", parallel, "dry_run", opts.DryRun)
 
@@ -130,8 +137,15 @@ func Backup(ctx context.Context, opts BackupOptions) (BackupSummary, error) {
 	}
 	logger.Info("remote objects listed", "count", len(remote))
 
-	files, dirs, err := walkSource(src.Path, excludes, logger)
+	scanRoot := src.Path
+	if subpath != "" {
+		scanRoot = filepath.Join(src.Path, filepath.FromSlash(subpath))
+	}
+	files, dirs, err := walkSource(src.Path, scanRoot, excludes, logger)
 	if err != nil {
+		if subpath != "" {
+			return sum, fmt.Errorf("scan subpath %q under %s: %w", subpath, src.Path, err)
+		}
 		return sum, fmt.Errorf("scan %s: %w", src.Path, err)
 	}
 	sum.Scanned = len(files)

@@ -23,7 +23,10 @@ type RestoreOptions struct {
 	Config     *config.Config
 	SourceName string
 	// DestDir はリストア先。空ならソースの path に復元する。
-	DestDir  string
+	DestDir string
+	// Subpath はソースルート相対(または source 配下の絶対パス)。空でなければ
+	// そのパス配下のファイルだけをリストア対象にする。
+	Subpath  string
 	DryRun   bool
 	Parallel int
 	Logger   *slog.Logger
@@ -69,6 +72,12 @@ func Restore(ctx context.Context, opts RestoreOptions) (RestoreSummary, error) {
 	if dest == "" {
 		dest = src.Path
 	}
+	// subpath は常にソースルート相対で DB の rel キーと突き合わせる。
+	// 絶対パス入力の相対化基準にはソースの path を使う(dest ではない)。
+	subpath, err := normalizeSubpath(opts.Subpath, src.Path)
+	if err != nil {
+		return sum, err
+	}
 	key, err := opts.Config.LoadKey()
 	if err != nil {
 		return sum, err
@@ -80,7 +89,7 @@ func Restore(ctx context.Context, opts RestoreOptions) (RestoreSummary, error) {
 	}
 
 	logger.Info("restore started",
-		"source", opts.SourceName, "dest", dest,
+		"source", opts.SourceName, "dest", dest, "subpath", subpath,
 		"bucket", bkt.Bucket, "prefix", bkt.Prefix,
 		"parallel", parallel, "dry_run", opts.DryRun)
 
@@ -117,6 +126,9 @@ func Restore(ctx context.Context, opts RestoreOptions) (RestoreSummary, error) {
 			return sum, err
 		}
 		err = db.Dirs(func(rel string) error {
+			if !matchSubpath(subpath, rel) {
+				return nil
+			}
 			return os.MkdirAll(filepath.Join(dest, filepath.FromSlash(rel)), 0o755)
 		})
 		if err != nil {
@@ -124,9 +136,12 @@ func Restore(ctx context.Context, opts RestoreOptions) (RestoreSummary, error) {
 		}
 	}
 
-	// 差分計算。
+	// 差分計算。subpath 指定時はその配下のファイルだけを対象にする。
 	var items []restoreItem
 	err = db.Files(func(rel string, rec conceal.FileRecord) error {
+		if !matchSubpath(subpath, rel) {
+			return nil
+		}
 		sum.Total++
 		target := filepath.Join(dest, filepath.FromSlash(rel))
 		if info, serr := os.Stat(target); serr == nil &&
@@ -146,6 +161,10 @@ func Restore(ctx context.Context, opts RestoreOptions) (RestoreSummary, error) {
 		return sum, err
 	}
 	sum.Candidates = len(items)
+
+	if subpath != "" && sum.Total == 0 {
+		logger.Warn("no files found under subpath; nothing to restore", "subpath", subpath)
+	}
 
 	if opts.DryRun {
 		var bytes int64

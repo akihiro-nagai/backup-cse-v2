@@ -358,6 +358,137 @@ func TestBackupAndRestoreE2E(t *testing.T) {
 	}
 }
 
+// TestBackupRestoreSubpathE2E は --subpath でソース配下の一部だけを
+// バックアップ・リストアできること、および絶対パス指定・範囲外指定の
+// 挙動を実 S3 に対して検証する。
+func TestBackupRestoreSubpathE2E(t *testing.T) {
+	env := setup(t)
+
+	// subpath "sub" 配下(sub/b.bin の 1 ファイル)だけをバックアップする。
+	sum, err := engine.Backup(context.Background(), engine.BackupOptions{
+		Config:     env.cfg,
+		SourceName: "e2e",
+		Subpath:    "sub",
+		Parallel:   4,
+	})
+	if err != nil {
+		t.Fatalf("subpath backup: %v (%+v)", err, sum)
+	}
+	if sum.Scanned != 1 || sum.Uploaded != 1 || sum.Failed != 0 {
+		t.Fatalf("subpath backup summary: %+v", sum)
+	}
+	if keys := env.listKeys(t, "e2e/data/"); len(keys) != 1 {
+		t.Fatalf("expected exactly 1 data object after subpath backup, got %v", keys)
+	}
+
+	// subpath "sub" でリストア → sub/b.bin だけが復元され、a.txt は復元されない。
+	dest := t.TempDir()
+	rsum, err := engine.Restore(context.Background(), engine.RestoreOptions{
+		Config:     env.cfg,
+		SourceName: "e2e",
+		DestDir:    dest,
+		Subpath:    "sub",
+		Parallel:   4,
+	})
+	if err != nil {
+		t.Fatalf("subpath restore: %v (%+v)", err, rsum)
+	}
+	if rsum.Total != 1 || rsum.Restored != 1 || rsum.Failed != 0 {
+		t.Fatalf("subpath restore summary: %+v", rsum)
+	}
+	assertSameFile(t, filepath.Join(env.srcDir, "sub", "b.bin"), filepath.Join(dest, "sub", "b.bin"))
+	if _, err := os.Stat(filepath.Join(dest, "a.txt")); !os.IsNotExist(err) {
+		t.Error("a.txt should not be restored under subpath 'sub'")
+	}
+
+	// ソース配下の絶対パス指定でも同じスコープになる(変更なしなのでアップロード 0)。
+	sum, err = engine.Backup(context.Background(), engine.BackupOptions{
+		Config:     env.cfg,
+		SourceName: "e2e",
+		Subpath:    filepath.Join(env.srcDir, "sub"),
+		Parallel:   4,
+	})
+	if err != nil {
+		t.Fatalf("absolute subpath backup: %v (%+v)", err, sum)
+	}
+	if sum.Scanned != 1 || sum.Uploaded != 0 || sum.Skipped != 1 {
+		t.Fatalf("absolute subpath backup summary: %+v", sum)
+	}
+
+	// ソース外の絶対パスはエラー。
+	if _, err := engine.Backup(context.Background(), engine.BackupOptions{
+		Config:     env.cfg,
+		SourceName: "e2e",
+		Subpath:    t.TempDir(),
+		Parallel:   4,
+	}); err == nil {
+		t.Fatal("expected error for subpath outside the source root")
+	}
+}
+
+// TestListE2E は backup 後に list(conceal DB のプレビュー)がオリジナルパスを
+// 正しく返すこと、subpath 絞り込みが効くことを実 S3 に対して検証する。
+func TestListE2E(t *testing.T) {
+	env := setup(t)
+	env.backup(t, false)
+
+	res, err := engine.List(context.Background(), engine.ListOptions{
+		Config:     env.cfg,
+		SourceName: "e2e",
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	// node_modules は excludes、emptydir はファイルを持たないので一覧は 2 件。
+	got := map[string]engine.ListEntry{}
+	for _, e := range res.Entries {
+		got[e.Path] = e
+	}
+	if res.Files != 2 || len(got) != 2 {
+		t.Fatalf("list entries = %+v", res.Entries)
+	}
+	if _, ok := got["a.txt"]; !ok {
+		t.Error("a.txt not listed")
+	}
+	if e, ok := got["sub/b.bin"]; !ok {
+		t.Error("sub/b.bin not listed")
+	} else if e.Size <= 0 || e.MTime.IsZero() {
+		t.Errorf("sub/b.bin metadata missing: %+v", e)
+	}
+
+	// subpath 絞り込み。
+	res, err = engine.List(context.Background(), engine.ListOptions{
+		Config:     env.cfg,
+		SourceName: "e2e",
+		Subpath:    "sub",
+	})
+	if err != nil {
+		t.Fatalf("list subpath: %v", err)
+	}
+	if res.Files != 1 || res.Entries[0].Path != "sub/b.bin" {
+		t.Fatalf("subpath list = %+v", res.Entries)
+	}
+
+	// --dirs で登録済みディレクトリ(emptydir 含む)が現れる。
+	res, err = engine.List(context.Background(), engine.ListOptions{
+		Config:      env.cfg,
+		SourceName:  "e2e",
+		IncludeDirs: true,
+	})
+	if err != nil {
+		t.Fatalf("list dirs: %v", err)
+	}
+	var haveEmpty bool
+	for _, e := range res.Entries {
+		if e.Path == "emptydir" && e.IsDir {
+			haveEmpty = true
+		}
+	}
+	if !haveEmpty {
+		t.Errorf("emptydir not listed with IncludeDirs: %+v", res.Entries)
+	}
+}
+
 func assertSameFile(t *testing.T, want, got string) {
 	t.Helper()
 	wb, err := os.ReadFile(want)

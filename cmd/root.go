@@ -21,7 +21,7 @@ Amazon S3 へ差分バックアップ・リストアする CLI ツールです�
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newBackupCmd(), newRestoreCmd(), newRestoreRequestCmd(), newKeygenCmd())
+	root.AddCommand(newBackupCmd(), newRestoreCmd(), newRestoreRequestCmd(), newListCmd(), newKeygenCmd())
 	return root
 }
 

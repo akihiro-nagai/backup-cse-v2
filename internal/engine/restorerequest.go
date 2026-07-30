@@ -27,7 +27,10 @@ type RestoreRequestOptions struct {
 	// expedited は使えない。
 	Tier string
 	// Days は復元した一時コピーを保持する日数。0 以下なら既定値(7日)。
-	Days     int32
+	Days int32
+	// Subpath はソースルート相対(または source 配下の絶対パス)。空でなければ
+	// そのパス配下のファイルだけを復元リクエスト対象にする。
+	Subpath  string
 	DryRun   bool
 	Parallel int
 	Logger   *slog.Logger
@@ -72,6 +75,10 @@ func RestoreRequest(ctx context.Context, opts RestoreRequestOptions) (RestoreReq
 	if err != nil {
 		return sum, err
 	}
+	subpath, err := normalizeSubpath(opts.Subpath, src.Path)
+	if err != nil {
+		return sum, err
+	}
 	class, err := storage.ParseStorageClass(src.StorageClass)
 	if err != nil {
 		return sum, fmt.Errorf("source %s: %w", opts.SourceName, err)
@@ -91,7 +98,8 @@ func RestoreRequest(ctx context.Context, opts RestoreRequestOptions) (RestoreReq
 	}
 
 	logger.Info("restore-request started",
-		"source", opts.SourceName, "tier", string(tier), "days", days, "dry_run", opts.DryRun)
+		"source", opts.SourceName, "subpath", subpath,
+		"tier", string(tier), "days", days, "dry_run", opts.DryRun)
 
 	workdir, err := os.MkdirTemp("", "backup-cse-")
 	if err != nil {
@@ -115,7 +123,10 @@ func RestoreRequest(ctx context.Context, opts RestoreRequestOptions) (RestoreReq
 
 	dataPrefix := opts.SourceName + "/data/"
 	var concealedKeys []string
-	err = db.Files(func(_ string, rec conceal.FileRecord) error {
+	err = db.Files(func(rel string, rec conceal.FileRecord) error {
+		if !matchSubpath(subpath, rel) {
+			return nil
+		}
 		concealedKeys = append(concealedKeys, rec.Concealed)
 		return nil
 	})
@@ -123,6 +134,10 @@ func RestoreRequest(ctx context.Context, opts RestoreRequestOptions) (RestoreReq
 		return sum, err
 	}
 	sum.Total = len(concealedKeys)
+
+	if subpath != "" && sum.Total == 0 {
+		logger.Warn("no files found under subpath; nothing to request", "subpath", subpath)
+	}
 
 	var notNeeded, available, inProgress, requested, failed atomic.Int64
 	g, gctx := errgroup.WithContext(ctx)
